@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Assistant RH</title>
+  <title>Assistant interne</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -54,15 +54,13 @@
     }
     .msg.bot.loading { color: #9b9b9b; font-style: italic; }
     .msg.error { background: #fef2f2; color: #dc2626; border-color: #fecaca; }
-    .sources {
-      margin-top: 8px;
-      padding-top: 8px;
-      border-top: 1px solid #f0f0f0;
-      font-size: 12px;
+    .welcome {
+      text-align: center;
+      padding: 40px 20px;
       color: #9b9b9b;
     }
-    .sources a { color: #2383e2; text-decoration: none; }
-    .sources a:hover { text-decoration: underline; }
+    .welcome h2 { font-size: 18px; color: #1a1a1a; margin-bottom: 8px; }
+    .welcome p { font-size: 14px; }
     #input-area {
       background: #fff;
       border-top: 1px solid #e8e7e3;
@@ -96,25 +94,6 @@
     }
     #send:hover { background: #1a6ec7; }
     #send:disabled { background: #c4d9f0; cursor: not-allowed; }
-    .welcome {
-      text-align: center;
-      padding: 40px 20px;
-      color: #9b9b9b;
-    }
-    .welcome h2 { font-size: 18px; color: #1a1a1a; margin-bottom: 8px; }
-    .welcome p { font-size: 14px; margin-bottom: 20px; }
-    .suggestions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
-    .suggestion {
-      background: #fff;
-      border: 1px solid #e8e7e3;
-      border-radius: 20px;
-      padding: 6px 14px;
-      font-size: 13px;
-      cursor: pointer;
-      color: #374151;
-      transition: all 0.15s;
-    }
-    .suggestion:hover { border-color: #2383e2; color: #2383e2; }
   </style>
 </head>
 <body>
@@ -129,13 +108,7 @@
   <div id="messages">
     <div class="welcome">
       <h2>Bonjour 👋</h2>
-      <p>Je suis votre assistant interne. Je consulte directement nos ressources Notion pour vous répondre.</p>
-      <div class="suggestions">
-        <div class="suggestion" onclick="ask(this.textContent)">Congés et absences</div>
-        <div class="suggestion" onclick="ask(this.textContent)">Convention collective</div>
-        <div class="suggestion" onclick="ask(this.textContent)">Nos marques</div>
-        <div class="suggestion" onclick="ask(this.textContent)">Procédures internes</div>
-      </div>
+      <p>Je suis votre assistant interne. Posez-moi n'importe quelle question sur nos ressources.</p>
     </div>
   </div>
 
@@ -146,11 +119,6 @@
   </div>
 
   <script>
-    function ask(text) {
-      document.getElementById('input').value = text;
-      sendMessage();
-    }
-
     async function sendMessage() {
       const input = document.getElementById('input');
       const text = input.value.trim();
@@ -186,14 +154,6 @@
         botMsg.className = 'msg bot';
         botMsg.innerHTML = data.answer.replace(/\n/g, '<br>');
 
-        if (data.sources && data.sources.length > 0) {
-          const srcDiv = document.createElement('div');
-          srcDiv.className = 'sources';
-          srcDiv.innerHTML = '📄 Sources : ' + data.sources.map(s =>
-            `<a href="${s.url}" target="_blank">${s.title}</a>`
-          ).join(', ');
-          botMsg.appendChild(srcDiv);
-        }
       } catch (err) {
         botMsg.className = 'msg bot error';
         botMsg.textContent = 'Erreur : ' + err.message;
