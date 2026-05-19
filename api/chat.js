@@ -12,55 +12,6 @@ const NOTION_PAGES = [
   process.env.NOTION_PAGE_CONVENTION,
 ].filter(Boolean);
 
-async function searchNotion(query) {
-  const results = [];
-
-  for (const dbId of NOTION_DATABASES) {
-    try {
-      const response = await notion.databases.query({
-        database_id: dbId,
-        filter: {
-          or: [
-            { property: 'Nom', title: { contains: query.split(' ')[0] } },
-            { property: 'Nom', title: { contains: query.split(' ').slice(-1)[0] } },
-          ]
-        },
-        page_size: 3,
-      });
-
-      for (const page of response.results) {
-        const title = page.properties?.Name?.title?.[0]?.plain_text ||
-                      page.properties?.Titre?.title?.[0]?.plain_text || 'Sans titre';
-        const content = await getPageContent(page.id);
-        results.push({
-          title,
-          url: page.url,
-          content: content.slice(0, 1500),
-        });
-      }
-    } catch (e) {
-      console.error('DB error:', dbId, e.message);
-    }
-  }
-
-  for (const pageId of NOTION_PAGES) {
-    try {
-      const page = await notion.pages.retrieve({ page_id: pageId });
-      const title = page.properties?.title?.title?.[0]?.plain_text || 'Document';
-      const content = await getPageContent(pageId);
-      results.push({
-        title,
-        url: page.url,
-        content: content.slice(0, 2000),
-      });
-    } catch (e) {
-      console.error('Page error:', pageId, e.message);
-    }
-  }
-
-  return results;
-}
-
 async function getPageContent(pageId) {
   try {
     const blocks = await notion.blocks.children.list({ block_id: pageId, page_size: 50 });
@@ -74,6 +25,61 @@ async function getPageContent(pageId) {
       .filter(Boolean)
       .join('\n');
   } catch { return ''; }
+}
+
+async function searchNotion(query) {
+  const results = [];
+
+  // Recherche dans toutes les bases de données en parallèle
+  const dbPromises = NOTION_DATABASES.map(async (dbId) => {
+    try {
+      const response = await notion.databases.query({
+        database_id: dbId,
+        page_size: 10,
+      });
+
+      const pagePromises = response.results.map(async (page) => {
+        const titleProp = Object.values(page.properties).find(p => p.type === 'title');
+        const title = titleProp?.title?.[0]?.plain_text || 'Sans titre';
+        const content = await getPageContent(page.id);
+        if (content) {
+          return { title, url: page.url, content: content.slice(0, 1500) };
+        }
+        return null;
+      });
+
+      const pages = await Promise.all(pagePromises);
+      return pages.filter(Boolean);
+    } catch (e) {
+      console.error('DB error:', dbId, e.message);
+      return [];
+    }
+  });
+
+  // Recherche dans toutes les pages de doc en parallèle
+  const pagePromises = NOTION_PAGES.map(async (pageId) => {
+    try {
+      const page = await notion.pages.retrieve({ page_id: pageId });
+      const titleProp = Object.values(page.properties).find(p => p.type === 'title');
+      const title = titleProp?.title?.[0]?.plain_text || 'Document';
+      const content = await getPageContent(pageId);
+      return { title, url: page.url, content: content.slice(0, 2000) };
+    } catch (e) {
+      console.error('Page error:', pageId, e.message);
+      return null;
+    }
+  });
+
+  // On attend tout en même temps
+  const [dbResults, pageResults] = await Promise.all([
+    Promise.all(dbPromises),
+    Promise.all(pagePromises),
+  ]);
+
+  dbResults.forEach(r => results.push(...r));
+  pageResults.filter(Boolean).forEach(r => results.push(r));
+
+  return results;
 }
 
 module.exports = async function handler(req, res) {
@@ -105,12 +111,13 @@ module.exports = async function handler(req, res) {
         max_tokens: 1024,
         system: `Tu es l'assistant interne de l'entreprise. Tu réponds aux questions des salariés 
 en te basant UNIQUEMENT sur les ressources Notion fournies. 
+Tu cherches dans TOUTES les ressources disponibles pour trouver la meilleure réponse.
 Si l'information n'est pas dans les ressources, dis-le clairement.
 Réponds en français, de façon concise et professionnelle.`,
         messages: [
           {
             role: 'user',
-            content: `Ressources disponibles :\n\n${context}\n\n---\n\nQuestion du salarié : ${question}`
+            content: `Ressources disponibles :\n\n${context}\n\n---\n\nQuestion : ${question}`
           }
         ]
       }),
