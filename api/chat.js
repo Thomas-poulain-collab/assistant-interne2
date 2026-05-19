@@ -21,8 +21,8 @@ async function searchNotion(query) {
         database_id: dbId,
         filter: {
           or: [
-            { property: 'Name', title: { contains: query.split(' ')[0] } },
-            { property: 'Name', title: { contains: query.split(' ').slice(-1)[0] } },
+            { property: 'Nom', title: { contains: query.split(' ')[0] } },
+            { property: 'Nom', title: { contains: query.split(' ').slice(-1)[0] } },
           ]
         },
         page_size: 3,
