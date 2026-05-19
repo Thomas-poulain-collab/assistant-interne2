@@ -12,6 +12,14 @@ const NOTION_PAGES = [
   process.env.NOTION_PAGE_CONVENTION,
 ].filter(Boolean);
 
+// Cache en mémoire
+let cache = {
+  data: [],
+  lastUpdated: null,
+};
+
+const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 heures
+
 async function getPageContent(pageId) {
   try {
     const page = await notion.pages.retrieve({ page_id: pageId });
@@ -46,81 +54,70 @@ async function getPageContent(pageId) {
   } catch { return ''; }
 }
 
-async function searchDatabase(dbId, query) {
-  const results = [];
-  const words = query.toLowerCase().split(' ').filter(w => w.length > 2);
-  let cursor = undefined;
+async function buildIndex() {
+  console.log('Construction de l\'index Notion...');
+  const index = [];
 
-  // On parcourt toutes les pages par batch de 100
-  do {
-    const response = await notion.databases.query({
-      database_id: dbId,
-      page_size: 100,
-      start_cursor: cursor,
-    });
-
-    for (const page of response.results) {
-      const titleProp = Object.values(page.properties).find(p => p.type === 'title');
-      const title = titleProp?.title?.[0]?.plain_text || '';
-      const titleLower = title.toLowerCase();
-
-      // On collecte aussi toutes les valeurs texte des colonnes pour la recherche
-      const allValues = Object.values(page.properties).map(prop => {
-        if (prop.type === 'rich_text') return prop.rich_text.map(t => t.plain_text).join(' ');
-        if (prop.type === 'select') return prop.select?.name || '';
-        if (prop.type === 'multi_select') return prop.multi_select.map(s => s.name).join(' ');
-        return '';
-      }).join(' ').toLowerCase();
-
-      // On garde l'entrée si un mot de la question correspond au titre ou aux colonnes
-      const matches = words.some(word => titleLower.includes(word) || allValues.includes(word));
-
-      if (matches) {
-        const content = await getPageContent(page.id);
-        results.push({ title, url: page.url, content: content.slice(0, 1500) });
-      }
-    }
-
-    cursor = response.has_more ? response.next_cursor : undefined;
-  } while (cursor);
-
-  return results;
-}
-
-async function searchNotion(query) {
-  const results = [];
-
-  const dbPromises = NOTION_DATABASES.map(async (dbId) => {
+  // Indexation des bases de données
+  for (const dbId of NOTION_DATABASES) {
     try {
-      return await searchDatabase(dbId, query);
+      let cursor = undefined;
+      do {
+        const response = await notion.databases.query({
+          database_id: dbId,
+          page_size: 100,
+          start_cursor: cursor,
+        });
+
+        for (const page of response.results) {
+          const titleProp = Object.values(page.properties).find(p => p.type === 'title');
+          const title = titleProp?.title?.[0]?.plain_text || 'Sans titre';
+          const content = await getPageContent(page.id);
+          if (content || title) {
+            index.push({ title, url: page.url, content: content.slice(0, 2000) });
+          }
+        }
+
+        cursor = response.has_more ? response.next_cursor : undefined;
+      } while (cursor);
     } catch (e) {
       console.error('DB error:', dbId, e.message);
-      return [];
     }
-  });
+  }
 
-  const pagePromises = NOTION_PAGES.map(async (pageId) => {
+  // Indexation des pages de documentation
+  for (const pageId of NOTION_PAGES) {
     try {
       const page = await notion.pages.retrieve({ page_id: pageId });
       const titleProp = Object.values(page.properties).find(p => p.type === 'title');
       const title = titleProp?.title?.[0]?.plain_text || 'Document';
       const content = await getPageContent(pageId);
-      return { title, url: page.url, content: content.slice(0, 2000) };
+      index.push({ title, url: page.url, content: content.slice(0, 5000) });
     } catch (e) {
       console.error('Page error:', pageId, e.message);
-      return null;
     }
-  });
+  }
 
-  const [dbResults, pageResults] = await Promise.all([
-    Promise.all(dbPromises),
-    Promise.all(pagePromises),
-  ]);
+  cache.data = index;
+  cache.lastUpdated = Date.now();
+  console.log(`Index construit : ${index.length} entrées`);
+  return index;
+}
 
-  dbResults.forEach(r => results.push(...r));
-  pageResults.filter(Boolean).forEach(r => results.push(r));
+async function getIndex() {
+  const now = Date.now();
+  if (!cache.lastUpdated || now - cache.lastUpdated > CACHE_DURATION) {
+    await buildIndex();
+  }
+  return cache.data;
+}
 
-  return results;
+function searchIndex(index, query) {
+  const words = query.toLowerCase().split(' ').filter(w => w.length > 2);
+  return index.filter(entry => {
+    const text = (entry.title + ' ' + entry.content).toLowerCase();
+    return words.some(word => text.includes(word));
+  }).slice(0, 15);
 }
 
 module.exports = async function handler(req, res) {
@@ -135,7 +132,9 @@ module.exports = async function handler(req, res) {
   if (!question) return res.status(400).json({ error: 'Question manquante' });
 
   try {
-    const sources = await searchNotion(question);
+    const index = await getIndex();
+    const sources = searchIndex(index, question);
+
     const context = sources.length > 0
       ? sources.map(s => `=== ${s.title} ===\n${s.content}`).join('\n\n')
       : 'Aucune ressource trouvée.';
@@ -167,10 +166,7 @@ Réponds en français, de façon concise et professionnelle.`,
     const data = await claudeRes.json();
     const answer = data.content?.[0]?.text || 'Impossible de générer une réponse.';
 
-    res.json({
-      answer,
-      sources: sources.map(s => ({ title: s.title, url: s.url })),
-    });
+    res.json({ answer, sources: sources.map(s => ({ title: s.title, url: s.url })) });
 
   } catch (err) {
     console.error(err);
