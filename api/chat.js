@@ -46,28 +46,53 @@ async function getPageContent(pageId) {
   } catch { return ''; }
 }
 
+async function searchDatabase(dbId, query) {
+  const results = [];
+  const words = query.toLowerCase().split(' ').filter(w => w.length > 2);
+  let cursor = undefined;
+
+  // On parcourt toutes les pages par batch de 100
+  do {
+    const response = await notion.databases.query({
+      database_id: dbId,
+      page_size: 100,
+      start_cursor: cursor,
+    });
+
+    for (const page of response.results) {
+      const titleProp = Object.values(page.properties).find(p => p.type === 'title');
+      const title = titleProp?.title?.[0]?.plain_text || '';
+      const titleLower = title.toLowerCase();
+
+      // On collecte aussi toutes les valeurs texte des colonnes pour la recherche
+      const allValues = Object.values(page.properties).map(prop => {
+        if (prop.type === 'rich_text') return prop.rich_text.map(t => t.plain_text).join(' ');
+        if (prop.type === 'select') return prop.select?.name || '';
+        if (prop.type === 'multi_select') return prop.multi_select.map(s => s.name).join(' ');
+        return '';
+      }).join(' ').toLowerCase();
+
+      // On garde l'entrée si un mot de la question correspond au titre ou aux colonnes
+      const matches = words.some(word => titleLower.includes(word) || allValues.includes(word));
+
+      if (matches) {
+        const content = await getPageContent(page.id);
+        results.push({ title, url: page.url, content: content.slice(0, 1500) });
+      }
+    }
+
+    cursor = response.has_more ? response.next_cursor : undefined;
+  } while (cursor);
+
+  return results;
+}
+
 async function searchNotion(query) {
   const results = [];
 
   const dbPromises = NOTION_DATABASES.map(async (dbId) => {
     try {
-      const response = await notion.databases.query({
-        database_id: dbId,
-        page_size: 10,
-      });
-
-      const pagePromises = response.results.map(async (page) => {
-        const titleProp = Object.values(page.properties).find(p => p.type === 'title');
-        const title = titleProp?.title?.[0]?.plain_text || 'Sans titre';
-        const content = await getPageContent(page.id);
-        if (content) {
-          return { title, url: page.url, content: content.slice(0, 1500) };
-        }
-        return null;
-      });
-
-      const pages = await Promise.all(pagePromises);
-      return pages.filter(Boolean);
+      return await searchDatabase(dbId, query);
     } catch (e) {
       console.error('DB error:', dbId, e.message);
       return [];
