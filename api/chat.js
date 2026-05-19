@@ -14,8 +14,25 @@ const NOTION_PAGES = [
 
 async function getPageContent(pageId) {
   try {
+    const page = await notion.pages.retrieve({ page_id: pageId });
+    const propTexts = Object.entries(page.properties).map(([key, prop]) => {
+      let value = '';
+      if (prop.type === 'title') value = prop.title.map(t => t.plain_text).join('');
+      else if (prop.type === 'rich_text') value = prop.rich_text.map(t => t.plain_text).join('');
+      else if (prop.type === 'select') value = prop.select?.name || '';
+      else if (prop.type === 'multi_select') value = prop.multi_select.map(s => s.name).join(', ');
+      else if (prop.type === 'number') value = prop.number?.toString() || '';
+      else if (prop.type === 'date') value = prop.date?.start || '';
+      else if (prop.type === 'checkbox') value = prop.checkbox ? 'Oui' : 'Non';
+      else if (prop.type === 'url') value = prop.url || '';
+      else if (prop.type === 'email') value = prop.email || '';
+      else if (prop.type === 'phone_number') value = prop.phone_number || '';
+      if (value) return `${key}: ${value}`;
+      return '';
+    }).filter(Boolean).join('\n');
+
     const blocks = await notion.blocks.children.list({ block_id: pageId, page_size: 50 });
-    return blocks.results
+    const blockText = blocks.results
       .map(block => {
         const type = block.type;
         const content = block[type];
@@ -24,13 +41,14 @@ async function getPageContent(pageId) {
       })
       .filter(Boolean)
       .join('\n');
+
+    return [propTexts, blockText].filter(Boolean).join('\n');
   } catch { return ''; }
 }
 
 async function searchNotion(query) {
   const results = [];
 
-  // Recherche dans toutes les bases de données en parallèle
   const dbPromises = NOTION_DATABASES.map(async (dbId) => {
     try {
       const response = await notion.databases.query({
@@ -56,7 +74,6 @@ async function searchNotion(query) {
     }
   });
 
-  // Recherche dans toutes les pages de doc en parallèle
   const pagePromises = NOTION_PAGES.map(async (pageId) => {
     try {
       const page = await notion.pages.retrieve({ page_id: pageId });
@@ -70,7 +87,6 @@ async function searchNotion(query) {
     }
   });
 
-  // On attend tout en même temps
   const [dbResults, pageResults] = await Promise.all([
     Promise.all(dbPromises),
     Promise.all(pagePromises),
