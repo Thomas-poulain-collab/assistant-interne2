@@ -49,25 +49,26 @@ async function getPageContent(pageId) {
 }
 
 module.exports = async function handler(req, res) {
+  res.setHeader('Content-Type', 'application/json');
+
   const key = req.headers['x-reindex-key'] || req.query.key;
   if (key !== process.env.REINDEX_KEY) {
     return res.status(401).json({ error: 'Non autorisé' });
   }
 
-  // On récupère le curseur et la base en cours depuis Redis
   const dbIndex = parseInt(req.query.db || '0');
   const cursor = req.query.cursor || undefined;
   const isNew = dbIndex === 0 && !cursor;
 
   try {
-    // Si c'est une nouvelle indexation, on repart de zéro
     let index = [];
     if (!isNew) {
       const stored = await redis.get('notion_index_partial');
-      index = stored ? JSON.parse(stored) : [];
+      if (stored) {
+        index = typeof stored === 'string' ? JSON.parse(stored) : stored;
+      }
     }
 
-    // On traite une seule base à la fois
     if (dbIndex < NOTION_DATABASES.length) {
       const dbId = NOTION_DATABASES[dbIndex];
       const response = await notion.databases.query({
@@ -85,19 +86,16 @@ module.exports = async function handler(req, res) {
         }
       }
 
-      // Sauvegarde partielle
       await redis.set('notion_index_partial', JSON.stringify(index));
 
       if (response.has_more) {
-        // Il reste des pages dans cette base
-        return res.json({
+        return res.status(200).json({
           status: 'continue',
           total: index.length,
           nextUrl: `/api/reindex?key=${key}&db=${dbIndex}&cursor=${response.next_cursor}`
         });
       } else {
-        // On passe à la base suivante
-        return res.json({
+        return res.status(200).json({
           status: 'continue',
           total: index.length,
           nextUrl: `/api/reindex?key=${key}&db=${dbIndex + 1}`
@@ -107,18 +105,22 @@ module.exports = async function handler(req, res) {
 
     // Toutes les bases sont faites, on indexe les pages de doc
     for (const pageId of NOTION_PAGES) {
-      const page = await notion.pages.retrieve({ page_id: pageId });
-      const titleProp = Object.values(page.properties).find(p => p.type === 'title');
-      const title = titleProp?.title?.[0]?.plain_text || 'Document';
-      const content = await getPageContent(pageId);
-      index.push({ title, url: page.url, content: content.slice(0, 5000) });
+      try {
+        const page = await notion.pages.retrieve({ page_id: pageId });
+        const titleProp = Object.values(page.properties).find(p => p.type === 'title');
+        const title = titleProp?.title?.[0]?.plain_text || 'Document';
+        const content = await getPageContent(pageId);
+        index.push({ title, url: page.url, content: content.slice(0, 5000) });
+      } catch (e) {
+        console.error('Page error:', pageId, e.message);
+      }
     }
 
     // Sauvegarde finale
     await redis.set('notion_index', JSON.stringify(index));
     await redis.del('notion_index_partial');
 
-    return res.json({ status: 'done', total: index.length });
+    return res.status(200).json({ status: 'done', total: index.length });
 
   } catch (err) {
     console.error(err);
