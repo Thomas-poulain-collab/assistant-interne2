@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Indexation Notion</title>
+  <style>
+    body { font-family: sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; }
+    button { background: #2383e2; color: white; border: none; padding: 12px 24px; border-radius: 8px; font-size: 16px; cursor: pointer; }
+    button:disabled { background: #ccc; }
+    #log { margin-top: 20px; padding: 16px; background: #f5f5f5; border-radius: 8px; font-size: 13px; font-family: monospace; min-height: 100px; white-space: pre-wrap; }
+    #progress { margin-top: 12px; font-size: 14px; color: #555; }
+  </style>
+</head>
+<body>
+  <h2>Indexation des ressources Notion</h2>
+  <p>Cliquez sur le bouton pour lancer ou relancer l'indexation complète.</p>
+  <button id="btn" onclick="startIndexing()">Lancer l'indexation</button>
+  <div id="progress"></div>
+  <div id="log"></div>
+
+  <script>
+    const KEY = 'reindex2024'; // Remplace par ton mot de passe REINDEX_KEY
+
+    async function startIndexing() {
+      const btn = document.getElementById('btn');
+      const log = document.getElementById('log');
+      const progress = document.getElementById('progress');
+      
+      btn.disabled = true;
+      log.textContent = 'Démarrage...\n';
+      
+      let url = `/api/reindex?key=${KEY}`;
+      let calls = 0;
+
+      while (url) {
+        try {
+          const res = await fetch(url);
+          const data = await res.json();
+          calls++;
+          
+          if (data.status === 'done') {
+            log.textContent += `✅ Terminé ! ${data.total} entrées indexées en ${calls} appels.\n`;
+            progress.textContent = `Index complet : ${data.total} ressources disponibles.`;
+            btn.disabled = false;
+            url = null;
+          } else if (data.status === 'continue') {
+            log.textContent += `⏳ ${data.total} entrées indexées...\n`;
+            progress.textContent = `En cours : ${data.total} entrées traitées...`;
+            url = data.nextUrl;
+            // Petite pause pour ne pas surcharger
+            await new Promise(r => setTimeout(r, 500));
+          } else if (data.error) {
+            log.textContent += `❌ Erreur : ${data.error}\n`;
+            btn.disabled = false;
+            url = null;
+          }
+          
+          log.scrollTop = log.scrollHeight;
+        } catch (err) {
+          log.textContent += `❌ Erreur réseau : ${err.message}\n`;
+          btn.disabled = false;
+          url = null;
+        }
+      }
+    }
+  </script>
+</body>
+</html>
