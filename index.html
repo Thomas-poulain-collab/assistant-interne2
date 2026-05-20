@@ -19,11 +19,41 @@
       padding: 12px 20px;
       display: flex;
       align-items: center;
-      gap: 10px;
+      justify-content: space-between;
     }
+    #header-left { display: flex; align-items: center; gap: 10px; }
     #header h1 { font-size: 15px; font-weight: 600; color: #1a1a1a; }
     #header p { font-size: 12px; color: #9b9b9b; }
     .dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; }
+    #admin-btn {
+      display: none;
+      background: #f3f4f6;
+      border: 1px solid #e8e7e3;
+      border-radius: 8px;
+      padding: 6px 12px;
+      font-size: 12px;
+      cursor: pointer;
+      color: #374151;
+    }
+    #admin-panel {
+      display: none;
+      background: #fff;
+      border-bottom: 1px solid #e8e7e3;
+      padding: 12px 20px;
+      gap: 12px;
+      align-items: center;
+    }
+    #admin-panel button {
+      background: #2383e2;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 8px 16px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    #admin-panel button:disabled { background: #c4d9f0; cursor: not-allowed; }
+    #admin-log { font-size: 12px; color: #555; font-family: monospace; }
     #messages {
       flex: 1;
       overflow-y: auto;
@@ -90,19 +120,25 @@
       cursor: pointer;
       font-size: 14px;
       font-weight: 500;
-      transition: background 0.15s;
     }
-    #send:hover { background: #1a6ec7; }
     #send:disabled { background: #c4d9f0; cursor: not-allowed; }
   </style>
 </head>
 <body>
   <div id="header">
-    <div class="dot"></div>
-    <div>
-      <h1>Assistant interne</h1>
-      <p>Posez vos questions sur nos ressources</p>
+    <div id="header-left">
+      <div class="dot"></div>
+      <div>
+        <h1>Assistant interne</h1>
+        <p>Posez vos questions sur nos ressources</p>
+      </div>
     </div>
+    <button id="admin-btn" onclick="toggleAdmin()">⚙️ Admin</button>
+  </div>
+
+  <div id="admin-panel">
+    <button id="index-btn" onclick="startIndexing()">🔄 Lancer l'indexation</button>
+    <span id="admin-log">Cliquez pour indexer toutes les ressources Notion.</span>
   </div>
 
   <div id="messages">
@@ -119,6 +155,54 @@
   </div>
 
   <script>
+    const KEY = 'reindex2024';
+
+    // Affiche le panneau admin si ?admin dans l'URL
+    if (window.location.search.includes('admin')) {
+      document.getElementById('admin-btn').style.display = 'block';
+      document.getElementById('admin-panel').style.display = 'flex';
+    }
+
+    function toggleAdmin() {
+      const panel = document.getElementById('admin-panel');
+      panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
+    }
+
+    async function startIndexing() {
+      const btn = document.getElementById('index-btn');
+      const log = document.getElementById('admin-log');
+      btn.disabled = true;
+
+      let url = `/api/reindex?key=${KEY}`;
+      let total = 0;
+
+      while (url) {
+        try {
+          const res = await fetch(url);
+          const data = await res.json();
+
+          if (data.status === 'done') {
+            log.textContent = `✅ Terminé ! ${data.total} entrées indexées.`;
+            btn.disabled = false;
+            url = null;
+          } else if (data.status === 'continue') {
+            total = data.total;
+            log.textContent = `⏳ ${total} entrées traitées...`;
+            url = data.nextUrl;
+            await new Promise(r => setTimeout(r, 300));
+          } else {
+            log.textContent = `❌ Erreur : ${data.error}`;
+            btn.disabled = false;
+            url = null;
+          }
+        } catch (err) {
+          log.textContent = `❌ Erreur : ${err.message}`;
+          btn.disabled = false;
+          url = null;
+        }
+      }
+    }
+
     async function sendMessage() {
       const input = document.getElementById('input');
       const text = input.value.trim();
@@ -153,7 +237,6 @@
 
         botMsg.className = 'msg bot';
         botMsg.innerHTML = data.answer.replace(/\n/g, '<br>');
-
       } catch (err) {
         botMsg.className = 'msg bot error';
         botMsg.textContent = 'Erreur : ' + err.message;
